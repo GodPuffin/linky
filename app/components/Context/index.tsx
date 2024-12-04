@@ -20,6 +20,7 @@ import { IconClipboard } from '@tabler/icons-react';
 import { showNotification } from '@mantine/notifications';
 import { Subgrid } from '../Subgrid';
 import { getContext } from '../../utils/context';
+import { getUserNamespace } from '../../utils/namespace';
 
 interface ContextProps {
   className: string;
@@ -42,11 +43,25 @@ const Context: React.FC<ContextProps> = ({ className, selected, height, userId }
       try {
         setIsLoadingInitial(true);
         // Get all context without filtering by message
-        const existingContext = await getContext('', userId, 3000, 0, false);
+        const response = await fetch('/api/getAllDocuments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ namespace: getUserNamespace(userId), userId }),
+        });
 
-        if (Array.isArray(existingContext)) {
+        if (!response.ok) {
+          throw new Error(`Server returned ${response.status}: ${await response.text()}`);
+        }
+
+        const { success, documents, error } = await response.json();
+
+        if (!success) {
+          throw new Error(error || 'Failed to load documents');
+        }
+
+        if (Array.isArray(documents)) {
           // Get unique URLs from the context
-          const uniqueUrls = new Set(existingContext.map((doc) => (doc.metadata as any).url));
+          const uniqueUrls = new Set(documents.map((doc) => (doc.metadata as any).url));
 
           // Update entries with existing URLs
           const updatedEntries = Array.from(uniqueUrls).map((url) => ({
@@ -73,7 +88,7 @@ const Context: React.FC<ContextProps> = ({ className, selected, height, userId }
           });
 
           // Convert context to cards format
-          const contextCards = existingContext.map((doc) => ({
+          const contextCards = documents.map((doc) => ({
             pageContent: (doc.metadata as any).chunk,
             metadata: {
               hash: (doc.metadata as any).hash,
@@ -86,7 +101,7 @@ const Context: React.FC<ContextProps> = ({ className, selected, height, userId }
         console.error('Error loading existing context:', error);
         showNotification({
           title: 'Error',
-          message: 'Failed to load existing context',
+          message: error instanceof Error ? error.message : 'Failed to load existing context',
           color: 'red',
         });
       } finally {
