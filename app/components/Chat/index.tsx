@@ -1,47 +1,52 @@
-import React, { ChangeEvent, FormEvent } from 'react';
-import { TextInput, Box, Stack, ScrollArea } from '@mantine/core';
-import { IconMessageForward } from '@tabler/icons-react'
+import React from 'react';
+import { Stack, TextInput, ActionIcon } from '@mantine/core';
+import { IconMessageForward, IconSend, IconMenu2 } from '@tabler/icons-react';
 import Messages from './Messages';
-import { Message } from 'ai/react';
-import { useMediaQuery } from '@mantine/hooks';
+import { Message } from 'ai';
 
-interface Chat {
-  input: string;
-  handleInputChange: (e: ChangeEvent<HTMLInputElement>) => void;
-  handleMessageSubmit: (e: FormEvent<HTMLFormElement>) => Promise<void>;
+interface ChatProps {
   messages: Message[];
+  input: string;
+  handleInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  handleMessageSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+  isLoading: boolean;
+  showDrawerButton?: boolean;
+  onDrawerOpen?: () => void;
 }
 
-const Chat: React.FC<Chat> = ({ input, handleInputChange, handleMessageSubmit, messages }) => {
-
-  const isMobile = useMediaQuery('(max-width: 768px)');
-
-  const chatContent = (
-    <Stack p="lg">
-      <Messages messages={
-      messages.length > 0 ? messages : [{ id: '1', content: 'Hello, how can I help you today?', role: 'assistant' }]} />
-      
-      <Box mt="md" mb="md">
-        <form
-          onSubmit={handleMessageSubmit}
-        >
-            <TextInput
-              size="lg"
-              radius="lg"              
-              placeholder="Talk with Linky..."
-              value={input}
-              onChange={handleInputChange}
-              rightSection={<IconMessageForward />}
-            />
-        </form>
-      </Box>
+const Chat: React.FC<ChatProps> = ({
+  messages,
+  input,
+  handleInputChange,
+  handleMessageSubmit,
+  isLoading,
+  showDrawerButton,
+  onDrawerOpen,
+}) => {
+  return (
+    <Stack style={{ height: '100%', justifyContent: 'space-between' }}>
+      <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, position: 'relative' }}>
+        <Messages messages={messages} isLoading={isLoading} />
+      </div>
+      <form onSubmit={handleMessageSubmit}>
+        <TextInput
+          value={input}
+          onChange={handleInputChange}
+          placeholder="Type your message..."
+          disabled={isLoading}
+          rightSection={<IconMessageForward />}
+          size="lg"
+          radius="lg"
+          leftSection={
+            showDrawerButton && (
+              <ActionIcon onClick={onDrawerOpen} variant="subtle">
+                <IconMenu2 />
+              </ActionIcon>
+            )
+          }
+        />
+      </form>
     </Stack>
-  );
-
-  return isMobile ? chatContent : (
-    <ScrollArea scrollbars="y">
-      {chatContent}
-    </ScrollArea>
   );
 };
 

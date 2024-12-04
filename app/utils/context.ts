@@ -1,31 +1,54 @@
-import { ScoredPineconeRecord } from "@pinecone-database/pinecone";
-import { getMatchesFromEmbeddings } from "./pinecone";
-import { getEmbeddings } from './embeddings'
+import { ScoredPineconeRecord } from '@pinecone-database/pinecone';
+import { getMatchesFromEmbeddings } from './pinecone';
+import { getEmbeddings } from './embeddings';
+import { getUserNamespace } from './namespace';
 
 export type Metadata = {
-  url: string,
-  text: string,
-  chunk: string,
-}
+  url: string;
+  text: string;
+  chunk: string;
+  hash: string;
+};
 
-// The function `getContext` is used to retrieve the context of a given message
-export const getContext = async (message: string, namespace: string, maxTokens = 3000, minScore = 0.7, getOnlyText = true): Promise<string | ScoredPineconeRecord[]> => {
+export const getContext = async (
+  message: string,
+  userId: string,
+  maxTokens = 3000,
+  minScore = 0.7,
+  getOnlyText = true
+): Promise<string | ScoredPineconeRecord[]> => {
+  const namespace = getUserNamespace(userId);
 
-  // Get the embeddings of the input message
-  const embedding = await getEmbeddings(message);
+  try {
+    // If message is empty, get all documents in the namespace
+    if (!message) {
+      const response = await fetch('/api/getAllDocuments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ namespace, userId }),
+      });
 
-  // Retrieve the matches for the embeddings from the specified namespace
-  const matches = await getMatchesFromEmbeddings(embedding, 3, namespace);
+      if (!response.ok) {
+        throw new Error('Failed to fetch documents');
+      }
 
-  // Filter out the matches that have a score lower than the minimum score
-  const qualifyingDocs = matches.filter(m => m.score && m.score > minScore);
+      const { documents } = await response.json();
+      return documents;
+    }
 
-  if (!getOnlyText) {
-    // Use a map to deduplicate matches by URL
-    return qualifyingDocs
+    // Original context fetching logic
+    const embedding = await getEmbeddings(message);
+    const matches = await getMatchesFromEmbeddings(embedding, 3, namespace);
+    const qualifyingDocs = matches.filter((m) => m.score && m.score > minScore);
+
+    if (!getOnlyText) {
+      return qualifyingDocs;
+    }
+
+    let docs = matches ? qualifyingDocs.map((match) => (match.metadata as Metadata).chunk) : [];
+    return docs.join('\n').substring(0, maxTokens);
+  } catch (error) {
+    console.error('Error in getContext:', error);
+    throw error;
   }
-
-  let docs = matches ? qualifyingDocs.map(match => (match.metadata as Metadata).chunk) : [];
-  // Join all the chunks of text together, truncate to the maximum number of tokens, and return the result
-  return docs.join("\n").substring(0, maxTokens)
-}
+};

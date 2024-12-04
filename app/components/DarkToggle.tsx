@@ -13,8 +13,8 @@ export function DarkToggle() {
         size="xl"
         aria-label="Toggle color scheme"
       >
-        <IconSun/>
-        <IconMoon/>
+        <IconSun />
+        <IconMoon />
       </ActionIcon>
     </Group>
   );

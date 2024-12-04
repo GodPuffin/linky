@@ -10,7 +10,8 @@ export const chunkedUpsert = async (
   index: Index,
   vectors: Array<PineconeRecord>,
   namespace: string,
-  chunkSize = 10
+  chunkSize = 10,
+  ttlSeconds?: number
 ) => {
   // Split the vectors into chunks
   const chunks = sliceIntoChunks<PineconeRecord>(vectors, chunkSize);
@@ -20,9 +21,9 @@ export const chunkedUpsert = async (
     await Promise.allSettled(
       chunks.map(async (chunk) => {
         try {
-          await index.namespace(namespace).upsert(vectors);
+          await index.namespace(namespace).upsert(chunk);
         } catch (e) {
-          console.log('Error upserting chunk', e);
+          console.error('Error upserting chunk:', e);
         }
       })
     );

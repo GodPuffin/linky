@@ -1,93 +1,161 @@
-import React, { useRef } from 'react';
-import { Paper, Text, Avatar, Stack, ScrollArea } from '@mantine/core';
+import React, { useRef, useEffect, useState } from 'react';
+import { Paper, Text, Avatar, Stack, ScrollArea, Loader } from '@mantine/core';
 import { Message } from 'ai';
 import { CodeHighlight, InlineCodeHighlight } from '@mantine/code-highlight';
+import { useScrollIntoView } from '@mantine/hooks';
 
-export default function Messages({ messages }: { messages: Message[] }) {
-  const messagesEndRef = useRef(null);
+interface MessagesProps {
+  messages: Message[];
+  isLoading: boolean;
+}
 
-  // Function to process message content and replace code blocks with InlineCodeHighlight components
+export default function Messages({ messages, isLoading }: MessagesProps) {
+  const { scrollIntoView, targetRef, scrollableRef } = useScrollIntoView<HTMLDivElement>({
+    duration: 200,
+    offset: 60,
+    cancelable: true,
+  });
+
+  useEffect(() => {
+    scrollIntoView({ alignment: 'end' });
+  }, [messages, scrollIntoView]);
+
   const processMessageContent = (message: string): React.ReactNode[] => {
-    const codeBlockRegex = /```(\w+)\s*([\s\S]+?)```/g; // Adjusted regex to allow optional whitespace after the language
-    const inlineCodeRegex = /`([^`]+)`/g;
-    const parts: React.ReactNode[] = [];
-    let lastIndex = 0;
-
-    // Split the message by multiline code blocks, keeping the delimiters
-    const splitMessage = message.split(/(```\w+\s*[\s\S]+?```)/g);
-
-    splitMessage.forEach((part, index) => {
-      if (codeBlockRegex.test(part)) {
-        // Reset the lastIndex for global regex to ensure it matches from the beginning of the string
-        codeBlockRegex.lastIndex = 0;
-        const match = codeBlockRegex.exec(part);
-        if (match) {
-          const [, language, code] = match;
-          parts.push(
-            <ScrollArea key={`block-${index}`} ml="sm" mt="sm" mb="sm" maw="100%">
-              <CodeHighlight code={code.trim()} language={language} withCopyButton={false}/>
-            </ScrollArea>
-          );
-        }
-      } else {
-        // This part is either plain text or contains inline code blocks
-        let intermediateLastIndex = 0;
-        part.replace(inlineCodeRegex, (match, code, matchIndex) => {
-          // Add preceding text if there is any
-          if (matchIndex > intermediateLastIndex) {
-            parts.push(part.slice(intermediateLastIndex, matchIndex));
-          }
-          // Add the InlineCodeHighlight component for the inline code block
-          parts.push(
-            <InlineCodeHighlight key={`inline-${index}-${matchIndex}`} code={code.trim()} />
-          );
-          intermediateLastIndex = matchIndex + match.length;
-          return match; // This return is not used but is necessary for the replace function
-        });
-
-        // Add any remaining text after the last inline code block
-        if (intermediateLastIndex < part.length) {
-          parts.push(part.slice(intermediateLastIndex));
+    try {
+      if (message.startsWith('{') && message.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(message);
+          message = parsed.content || message;
+        } catch (e) {
+          console.error('Failed to parse JSON message:', e);
         }
       }
-    });
 
-    return parts;
+      const codeBlockRegex = /```(\w+)\s*([\s\S]+?)```/g;
+      const inlineCodeRegex = /`([^`]+)`/g;
+      const parts: React.ReactNode[] = [];
+
+      const splitMessage = message.split(/(```\w+\s*[\s\S]+?```)/g);
+
+      splitMessage.forEach((part, index) => {
+        if (codeBlockRegex.test(part)) {
+          codeBlockRegex.lastIndex = 0;
+          const match = codeBlockRegex.exec(part);
+          if (match) {
+            const [, language, code] = match;
+            parts.push(
+              <ScrollArea key={`block-${index}`} ml="sm" mt="sm" mb="sm" maw="100%">
+                <CodeHighlight code={code.trim()} language={language} withCopyButton={false} />
+              </ScrollArea>
+            );
+          }
+        } else {
+          let intermediateLastIndex = 0;
+          part.replace(inlineCodeRegex, (match, code, matchIndex) => {
+            if (matchIndex > intermediateLastIndex) {
+              parts.push(
+                <Text component="span" key={`text-${index}-${matchIndex}`}>
+                  {part.slice(intermediateLastIndex, matchIndex)}
+                </Text>
+              );
+            }
+            parts.push(
+              <InlineCodeHighlight key={`inline-${index}-${matchIndex}`} code={code.trim()} />
+            );
+            intermediateLastIndex = matchIndex + match.length;
+            return match;
+          });
+
+          if (intermediateLastIndex < part.length) {
+            parts.push(
+              <Text component="span" key={`text-${index}-final`}>
+                {part.slice(intermediateLastIndex)}
+              </Text>
+            );
+          }
+        }
+      });
+
+      return parts;
+    } catch (error) {
+      console.error('Error processing message:', error);
+      return [<Text key="fallback">{message}</Text>];
+    }
   };
 
   return (
-    <Stack p="xs" style={{ minHeight: '100%' }}>
+    <Stack
+      p="xs"
+      style={{
+        height: '100%',
+        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+      ref={scrollableRef}
+    >
+      <div style={{ flex: '1 0 auto' }}>
         {messages.map((msg, index) => (
-          <div 
-            key={index} 
+          <div
+            key={`${msg.id}-${index}`}
             style={{
               display: 'flex',
-              justifyContent: msg.role === 'assistant' ? 'flex-start' : 'flex-end'
+              justifyContent: msg.role === 'assistant' ? 'flex-start' : 'flex-end',
+              width: '100%',
+              marginBottom: 'var(--mantine-spacing-md)',
             }}
           >
             <Paper
               shadow="md"
               p="md"
               radius="lg"
-              style={{ 
-                maxWidth: '85%', 
+              style={{
+                maxWidth: '85%',
                 display: 'flex',
-                alignItems: 'center'
+                gap: '12px',
+                alignItems: 'flex-start',
               }}
               withBorder
             >
-          {msg.role === 'assistant' ? (
-            <Avatar radius="xl" src="/linky.png" alt="Linky" />
-          ) : (
-            <Avatar radius="xl">🧑‍💻</Avatar>
-          )}
-          <Text m="xs" maw="inherit">
-            {processMessageContent(msg.content)}
-          </Text>
-        </Paper>
+              {msg.role === 'assistant' ? (
+                <Avatar radius="xl" src="/linky.png" alt="Linky" />
+              ) : (
+                <Avatar radius="xl">🧑‍💻</Avatar>
+              )}
+              <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {processMessageContent(msg.content)}
+              </div>
+            </Paper>
+          </div>
+        ))}
+        {isLoading && (
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'flex-start',
+              width: '100%',
+              marginBottom: 'var(--mantine-spacing-md)',
+            }}
+          >
+            <Paper
+              shadow="md"
+              p="md"
+              radius="lg"
+              style={{
+                maxWidth: '85%',
+                display: 'flex',
+                gap: '12px',
+                alignItems: 'flex-start',
+              }}
+              withBorder
+            >
+              <Avatar radius="xl" src="/linky.png" alt="Linky" />
+              <Loader size="sm" type="bars" m="sm" />
+            </Paper>
+          </div>
+        )}
       </div>
-      ))}
-      <div ref={messagesEndRef} />
+      <div ref={targetRef} />
     </Stack>
   );
 }

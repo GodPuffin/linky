@@ -13,9 +13,12 @@ const LinkyFace: React.FC<LinkyFaceProps> = ({ eyeSize, mouthType }) => {
   const handleMouseMove = (event: MouseEvent) => {
     if (linkyRef.current) {
       const linkyRect = linkyRef.current.getBoundingClientRect();
+      const scaleX = 100 / linkyRect.width;
+      const scaleY = 100 / linkyRect.height;
+
       setMousePosition({
-        x: event.clientX - linkyRect.left,
-        y: event.clientY - linkyRect.top,
+        x: (event.clientX - linkyRect.left) * scaleX,
+        y: (event.clientY - linkyRect.top) * scaleY,
       });
     }
   };
@@ -38,7 +41,11 @@ const LinkyFace: React.FC<LinkyFaceProps> = ({ eyeSize, mouthType }) => {
     startBreathing();
   }, []);
 
-  const calculatePosition = (initialPosition: { x: number, y: number }, maxMovement: number, breathOffset: number = 0) => {
+  const calculatePosition = (
+    initialPosition: { x: number; y: number },
+    maxMovement: number,
+    breathOffset: number = 0
+  ) => {
     const dx = mousePosition.x - initialPosition.x;
     const dy = mousePosition.y - initialPosition.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
@@ -62,9 +69,27 @@ const LinkyFace: React.FC<LinkyFaceProps> = ({ eyeSize, mouthType }) => {
   const renderMouth = () => {
     switch (mouthType) {
       case 'flat':
-        return <line x1="30" y1={mouthPosition.y} x2="70" y2={mouthPosition.y} stroke="white" strokeWidth="5" />;
+        return (
+          <line
+            x1="30"
+            y1={mouthPosition.y}
+            x2="70"
+            y2={mouthPosition.y}
+            stroke="white"
+            strokeWidth="5"
+          />
+        );
       case 'o':
-        return <circle cx={mouthPosition.x} cy={mouthPosition.y} r="10" fill="none" stroke="white" strokeWidth="5" />;
+        return (
+          <circle
+            cx={mouthPosition.x}
+            cy={mouthPosition.y}
+            r="10"
+            fill="none"
+            stroke="white"
+            strokeWidth="5"
+          />
+        );
       case 'zigzag':
         return (
           <polyline
@@ -82,10 +107,17 @@ const LinkyFace: React.FC<LinkyFaceProps> = ({ eyeSize, mouthType }) => {
   };
 
   return (
-    <svg ref={linkyRef} width="60%" height="60%"  preserveAspectRatio='X100Y100 meet' viewBox='0 0 100 100' xmlns="http://www.w3.org/2000/svg">
+    <svg
+      ref={linkyRef}
+      width="60%"
+      height="60%"
+      preserveAspectRatio="X100Y100 meet"
+      viewBox="0 0 100 100"
+      xmlns="http://www.w3.org/2000/svg"
+    >
       {/* Eyes */}
-      <circle cx={leftEyePosition.x} cy={leftEyePosition.y} r={eyeSize} fill="white"/>
-      <circle cx={rightEyePosition.x} cy={rightEyePosition.y} r={eyeSize} fill="white"/>
+      <circle cx={leftEyePosition.x} cy={leftEyePosition.y} r={eyeSize} fill="white" />
+      <circle cx={rightEyePosition.x} cy={rightEyePosition.y} r={eyeSize} fill="white" />
       {/* Mouth */}
       {renderMouth()}
     </svg>

@@ -1,0 +1,11 @@
+.columnContainer {
+  columns: 2;
+  column-gap: var(--mantine-spacing-md);
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .columnContainer {
+    columns: 1;
+  }
+} 

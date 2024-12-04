@@ -12,7 +12,7 @@ const linkyColors: MantineColorsTuple = [
   '#09b9ff',
   '#00a3e4',
   '#0091cd',
-  '#007db5'
+  '#007db5',
 ];
 
 export const theme = createTheme({

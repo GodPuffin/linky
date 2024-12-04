@@ -3,35 +3,112 @@ import { urls } from './urls';
 import UrlButton from './UrlButton';
 import { Card, ICard } from './Card';
 import { clearIndex, crawlDocument, fetchDocumentTitle } from './utils';
-import { Button, ScrollArea, Group, Center, TextInput, Paper, Title } from '@mantine/core';
-import { IconClipboard } from '@tabler/icons-react'
+import {
+  Button,
+  ScrollArea,
+  Group,
+  Center,
+  TextInput,
+  Paper,
+  Title,
+  Skeleton,
+  Box,
+  LoadingOverlay,
+  Loader,
+} from '@mantine/core';
+import { IconClipboard } from '@tabler/icons-react';
 import { showNotification } from '@mantine/notifications';
 import { Subgrid } from '../Subgrid';
+import { getContext } from '../../utils/context';
 
 interface ContextProps {
   className: string;
   selected: string[] | null;
-  height: number;
+  height: string | number;
+  userId: string;
 }
 
-const Context: React.FC<ContextProps> = ({ className, selected, height }) => {
+const Context: React.FC<ContextProps> = ({ className, selected, height, userId }) => {
   const [entries, setEntries] = useState([...urls]);
   const [cards, setCards] = useState<ICard[]>([]);
   const [loading, setLoading] = useState(false);
-
+  const [inputLoading, setInputLoading] = useState(false);
   const [url, setUrl] = useState('');
+  const [isLoadingInitial, setIsLoadingInitial] = useState(true);
+
+  // Load existing context on mount
+  useEffect(() => {
+    const loadExistingContext = async () => {
+      try {
+        setIsLoadingInitial(true);
+        // Get all context without filtering by message
+        const existingContext = await getContext('', userId, 3000, 0, false);
+
+        if (Array.isArray(existingContext)) {
+          // Get unique URLs from the context
+          const uniqueUrls = new Set(existingContext.map((doc) => (doc.metadata as any).url));
+
+          // Update entries with existing URLs
+          const updatedEntries = Array.from(uniqueUrls).map((url) => ({
+            url,
+            title: url.replace(/^https?:\/\//, '').split('/')[0], // Temporary title
+            seeded: true,
+            loading: false,
+          }));
+
+          // Fetch titles for each URL
+          await Promise.all(
+            updatedEntries.map(async (entry) => {
+              await fetchDocumentTitle(entry.url, (title) => {
+                entry.title = title;
+              });
+            })
+          );
+
+          setEntries((prevEntries) => {
+            // Combine existing entries with new ones, avoiding duplicates
+            const existingUrls = new Set(prevEntries.map((e) => e.url));
+            const newEntries = updatedEntries.filter((e) => !existingUrls.has(e.url));
+            return [...prevEntries, ...newEntries];
+          });
+
+          // Convert context to cards format
+          const contextCards = existingContext.map((doc) => ({
+            pageContent: (doc.metadata as any).chunk,
+            metadata: {
+              hash: (doc.metadata as any).hash,
+            },
+          }));
+
+          setCards(contextCards);
+        }
+      } catch (error) {
+        console.error('Error loading existing context:', error);
+        showNotification({
+          title: 'Error',
+          message: 'Failed to load existing context',
+          color: 'red',
+        });
+      } finally {
+        setIsLoadingInitial(false);
+        setLoading(false);
+      }
+    };
+
+    loadExistingContext();
+  }, [userId]);
 
   const handleAddUrl = async (url: string) => {
-    setLoading(true);
+    setInputLoading(true);
     try {
-      const urlExists = entries.some(entry => entry.url === url);
+      const urlExists = entries.some((entry) => entry.url === url);
       if (urlExists) {
         showNotification({
           title: 'Error',
           message: 'URL already exists',
           color: 'orange',
         });
-        setLoading(false);
+        setInputLoading(false);
         return;
       }
 
@@ -40,7 +117,7 @@ const Context: React.FC<ContextProps> = ({ className, selected, height }) => {
       await fetchDocumentTitle(url, (title) => {
         fetchedTitle = title;
       }).catch((error) => {
-        console.error("Failed to fetch document title:", error);
+        console.error('Failed to fetch document title:', error);
         showNotification({
           title: 'Error',
           message: error instanceof Error ? error.message : String(error),
@@ -49,27 +126,29 @@ const Context: React.FC<ContextProps> = ({ className, selected, height }) => {
       });
 
       if (!fetchedTitle) {
-        // Handle case where title could not be fetched
         fetchedTitle = `URL ${entries.length + 1}`;
       }
 
       // Add the URL with the fetched or fallback title
-      setEntries([...entries, {
-        url: url,
-        title: fetchedTitle,
-        seeded: false,
-        loading: false,
-      }]);
+      setEntries([
+        ...entries,
+        {
+          url: url,
+          title: fetchedTitle,
+          seeded: false,
+          loading: false,
+        },
+      ]);
       setUrl('');
     } catch (error) {
-      console.error("Failed to add URL:", error);
+      console.error('Failed to add URL:', error);
       showNotification({
         title: 'Error',
         message: error instanceof Error ? error.message : String(error),
         color: 'red',
       });
     } finally {
-      setLoading(false);
+      setInputLoading(false);
     }
   };
 
@@ -85,46 +164,113 @@ const Context: React.FC<ContextProps> = ({ className, selected, height }) => {
     <UrlButton
       key={entry.url}
       entry={entry}
-      onClick={() => crawlDocument(entry.url, setEntries, setCards, splittingMethod, 256, 1)}
+      onClick={async () => {
+        await crawlDocument(entry.url, setEntries, setCards, splittingMethod, 256, 1, userId);
+
+        // Refresh just the cards after document is crawled
+        try {
+          const existingContext = await getContext('', userId, 3000, 0, false);
+          if (Array.isArray(existingContext)) {
+            // Get existing card hashes for deduplication
+            const existingHashes = new Set(cards.map((card) => card.metadata.hash));
+
+            // Filter and map new cards
+            const newCards = existingContext
+              .filter((doc) => !existingHashes.has((doc.metadata as any).hash))
+              .map((doc) => ({
+                pageContent: (doc.metadata as any).chunk,
+                metadata: {
+                  hash: (doc.metadata as any).hash,
+                  url: (doc.metadata as any).url,
+                },
+              }));
+
+            // Append new cards to existing ones
+            setCards((prevCards) => [...prevCards, ...newCards]);
+          }
+        } catch (error) {
+          console.error('Error refreshing cards:', error);
+          showNotification({
+            title: 'Error',
+            message: 'Failed to refresh context cards',
+            color: 'red',
+          });
+        }
+      }}
       loading={loading}
     />
   ));
 
+  const handleClearIndex = async () => {
+    await clearIndex(setEntries, setCards, userId);
+  };
+
+  // Add loading skeletons for buttons
+  const buttonSkeletons = Array(3)
+    .fill(0)
+    .map((_, index) => (
+      <Skeleton key={`button-skeleton-${index}`} height={36} radius="lg" width={120} />
+    ));
+
+  // Add loading skeletons for cards
+  const cardSkeletons = Array(4)
+    .fill(0)
+    .map((_, index) => (
+      <Skeleton key={`card-skeleton-${index}`} height={200} radius="lg" mb="md" />
+    ));
+
   return (
-    <ScrollArea p="lg" h={height}>
-    <Title order={1} mb="md" ml="xl">Sources</Title>
+    <Box p="lg" h={height} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <Title order={1} mb="md" ml="xl">
+        Sources
+      </Title>
       <Paper p="xl" shadow="xs" radius="lg" withBorder mb="lg" mt="lg">
         <Center>
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            handleAddUrl(url);
-          }}>
-            <TextInput size="lg" radius="lg" placeholder='Paste your URL here' value={url} rightSection={<IconClipboard />} maw={800} width="100%" onChange={(e) => setUrl(e.target.value)}/>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleAddUrl(url);
+            }}
+          >
+            <TextInput
+              size="lg"
+              radius="lg"
+              placeholder="Paste your URL here"
+              value={url}
+              rightSection={inputLoading ? <Loader size={16} /> : <IconClipboard />}
+              onChange={(e) => setUrl(e.target.value)}
+              disabled={inputLoading}
+            />
           </form>
         </Center>
         <Group gap="xs" m="md">
-          {buttons}
+          {isLoadingInitial ? buttonSkeletons : buttons}
         </Group>
         <Center>
-        <Button      
+          <Button
             variant="filled"
             color="#01b7ff"
-            onClick={() => clearIndex(setEntries, setCards)}
+            onClick={handleClearIndex}
+            disabled={loading || isLoadingInitial}
           >
             Clear Index
-        </Button>
+          </Button>
         </Center>
       </Paper>
-      {cards != null && (
-        <Paper p="xl" shadow="xs" radius="lg" withBorder mt={12}>
-          <Subgrid>
-            {cards.map((card, key) => (
-              <Card key={key} card={card} selected={selected} />
-            ))}
-          </Subgrid>
-        </Paper>
-      )}
-    </ScrollArea>
+      <ScrollArea style={{ flex: 1 }} offsetScrollbars>
+        {(Array.isArray(cards) && cards.length > 0) || isLoadingInitial ? (
+          <Paper p="xl" radius="lg" mt={12}>
+            <Subgrid>
+              {isLoadingInitial
+                ? cardSkeletons
+                : cards.map((card, index) => (
+                    <Card key={`${card.metadata.hash}-${index}`} card={card} selected={selected} />
+                  ))}
+            </Subgrid>
+          </Paper>
+        ) : null}
+      </ScrollArea>
+    </Box>
   );
 };
 

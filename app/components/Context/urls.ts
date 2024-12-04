@@ -10,7 +10,12 @@ interface UrlEntry {
 export const urls: UrlEntry[] = [];
 
 // Function to add a new URL
-export const addUrl = async (newUrl: string, title: string, setLoading: (loading: boolean) => void, onError: (error: string) => void) => {
+export const addUrl = async (
+  newUrl: string,
+  title: string,
+  setLoading: (loading: boolean) => void,
+  onError: (error: string) => void
+) => {
   setLoading(true); // Start loading
   try {
     urls.push({
@@ -20,7 +25,7 @@ export const addUrl = async (newUrl: string, title: string, setLoading: (loading
       loading: false,
     });
   } catch (error) {
-    console.error("Error fetching URL:", error);
+    console.error('Error fetching URL:', error);
     onError(error instanceof Error ? error.message : String(error));
     showNotification({
       title: 'Error',

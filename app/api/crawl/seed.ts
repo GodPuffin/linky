@@ -1,95 +1,163 @@
-import { getEmbeddings } from "../../utils/embeddings";
-import { Document, MarkdownTextSplitter, RecursiveCharacterTextSplitter } from "@pinecone-database/doc-splitter";
-import { Pinecone, PineconeRecord, ServerlessSpecCloudEnum } from "@pinecone-database/pinecone";
-import { chunkedUpsert } from '../../utils/chunkedUpsert'
+import { getEmbeddings } from '../../utils/embeddings';
+import {
+  Document,
+  MarkdownTextSplitter,
+  RecursiveCharacterTextSplitter,
+} from '@pinecone-database/doc-splitter';
+import { Pinecone, PineconeRecord, ServerlessSpecCloudEnum } from '@pinecone-database/pinecone';
+import { chunkedUpsert } from '../../utils/chunkedUpsert';
 import md5 from 'md5';
-import { Crawler, Page } from "./crawler";
-import { truncateStringByBytes } from "../../utils/truncateString"
+import { truncateStringByBytes } from '../../utils/truncateString';
+import { getUserNamespace } from '../../utils/namespace';
 
 interface SeedOptions {
-  splittingMethod: string
-  chunkSize: number
-  chunkOverlap: number
+  splittingMethod: string;
+  chunkSize: number;
+  chunkOverlap: number;
 }
 
-type DocumentSplitter = RecursiveCharacterTextSplitter | MarkdownTextSplitter
+// Define the Page interface
+interface Page {
+  url: string;
+  content: string;
+}
 
-async function seed(url: string, limit: number, indexName: string, cloudName: ServerlessSpecCloudEnum, regionName: string, options: SeedOptions) {
+type DocumentSplitter = RecursiveCharacterTextSplitter | MarkdownTextSplitter;
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function seed(
+  url: string,
+  limit: number,
+  indexName: string,
+  cloudName: ServerlessSpecCloudEnum,
+  regionName: string,
+  options: SeedOptions,
+  userId: string,
+  onProgress: (progress: number, documents?: any) => Promise<void>
+) {
   try {
-    // Initialize the Pinecone client
     const pinecone = new Pinecone();
+    const namespace = getUserNamespace(userId);
 
-    // Destructure the options object
-    const { splittingMethod, chunkSize, chunkOverlap } = options;
-
-    // Create a new Crawler with depth 1 and maximum pages as limit
-    const crawler = new Crawler(1, limit || 100);
-
-    // Crawl the given URL and get the pages
-    const pages = await crawler.crawl(url) as Page[];
-
-    // Choose the appropriate document splitter based on the splitting method
-    const splitter: DocumentSplitter = splittingMethod === 'recursive' ?
-      new RecursiveCharacterTextSplitter({ chunkSize, chunkOverlap }) : new MarkdownTextSplitter({});
-
-    // Prepare documents by splitting the pages
-    const documents = await Promise.all(pages.map(page => prepareDocument(page, splitter)));
-
-    // Create Pinecone index if it does not exist
-    const indexList: string[] = (await pinecone.listIndexes())?.indexes?.map(index => index.name) || [];
+    // Initialize Pinecone index
+    const indexList = (await pinecone.listIndexes())?.indexes?.map((index) => index.name) || [];
     const indexExists = indexList.includes(indexName);
     if (!indexExists) {
       await pinecone.createIndex({
         name: indexName,
-        dimension: 1536,
+        dimension: 1024,
         waitUntilReady: true,
-        spec: { 
-          serverless: { 
-              cloud: cloudName, 
-              region: regionName
-          }
-        } 
+        spec: { serverless: { cloud: cloudName, region: regionName } },
       });
     }
+    const index = pinecone.Index(indexName);
 
-    const index = pinecone.Index(indexName)
+    // Fetch content using Jina Reader
 
-    // Get the vector embeddings for the documents
-    const vectors = await Promise.all(documents.flat().map(embedDocument));
+    const jinaUrl = `https://r.jina.ai/${url}`;
+    const response = await fetch(jinaUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch content from Jina Reader: ${response.statusText}`);
+    }
+    const content = await response.text();
 
-    // Upsert vectors into the Pinecone index
-    await chunkedUpsert(index!, vectors, '', 10);
+    if (!content || content.trim().length === 0) {
+      throw new Error('No content retrieved from URL');
+    }
 
-    // Return the first document
-    return documents[0];
+    const page = {
+      url,
+      content: content.trim(),
+    };
+
+    // Split the document
+    const { splittingMethod, chunkSize, chunkOverlap } = options;
+    const splitter =
+      splittingMethod === 'recursive'
+        ? new RecursiveCharacterTextSplitter({ chunkSize, chunkOverlap })
+        : new MarkdownTextSplitter({});
+
+    const documents = await prepareDocument(page, splitter);
+    const totalChunks = documents.length;
+
+    // Send initial progress with a small delay
+    await onProgress(0);
+    await delay(100);
+
+    // Process documents
+
+    const vectors = [];
+    let processedCount = 0;
+
+    for (let i = 0; i < documents.length; i++) {
+      const doc = documents[i];
+      try {
+        const vector = await embedDocument(doc);
+        vectors.push(vector);
+        processedCount++;
+
+        // Calculate progress as percentage of documents processed
+        const progress = Math.round((processedCount / totalChunks) * 100);
+
+        try {
+          await onProgress(progress);
+          // Add a small delay between progress updates
+          await delay(100);
+        } catch (progressError) {
+          console.error('[SEED] Error sending progress:', progressError);
+        }
+      } catch (error) {
+        console.error(`[SEED] Error embedding document ${i + 1}:`, error);
+        continue;
+      }
+    }
+
+    // Upsert vectors to Pinecone
+
+    await chunkedUpsert(index, vectors, namespace);
+
+    // Send final progress with documents
+    try {
+      await onProgress(100, documents);
+    } catch (finalProgressError) {
+      console.error('[SEED] Error sending final progress:', finalProgressError);
+    }
+
+    return { documents };
   } catch (error) {
-    console.error("Error seeding:", error);
+    console.error('[SEED] Error in seed function:', error);
     throw error;
   }
 }
 
 async function embedDocument(doc: Document): Promise<PineconeRecord> {
   try {
-    // Generate OpenAI embeddings for the document content
+    // Validate document content
+    if (!doc.pageContent || doc.pageContent.trim().length === 0) {
+      throw new Error('Empty document content');
+    }
+
+    const contentLength = doc.pageContent.trim().length;
+
+    // Generate embeddings for the document content
     const embedding = await getEmbeddings(doc.pageContent);
 
     // Create a hash of the document content
     const hash = md5(doc.pageContent);
 
-    // Return the vector embedding object
     return {
-      id: hash, // The ID of the vector is the hash of the document content
-      values: embedding, // The vector values are the OpenAI embeddings
-      metadata: { // The metadata includes details about the document
-        chunk: doc.pageContent, // The chunk of text that the vector represents
-        text: doc.metadata.text as string, // The text of the document
-        url: doc.metadata.url as string, // The URL where the document was found
-        hash: doc.metadata.hash as string // The hash of the document content
-      }
+      id: hash,
+      values: embedding,
+      metadata: {
+        chunk: doc.pageContent,
+        text: doc.metadata.text as string,
+        url: doc.metadata.url as string,
+        hash: doc.metadata.hash as string,
+      },
     } as PineconeRecord;
   } catch (error) {
-    console.log("Error embedding document: ", error)
-    throw error
+    throw error;
   }
 }
 
@@ -104,7 +172,7 @@ async function prepareDocument(page: Page, splitter: DocumentSplitter): Promise<
       metadata: {
         url: page.url,
         // Truncate the text to a maximum byte length
-        text: truncateStringByBytes(pageContent, 36000)
+        text: truncateStringByBytes(pageContent, 36000),
       },
     }),
   ]);
@@ -116,13 +184,10 @@ async function prepareDocument(page: Page, splitter: DocumentSplitter): Promise<
       metadata: {
         ...doc.metadata,
         // Create a hash of the document content
-        hash: md5(doc.pageContent)
+        hash: md5(doc.pageContent),
       },
     };
   });
 }
-
-
-
 
 export default seed;
